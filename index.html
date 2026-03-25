@@ -228,7 +228,8 @@
                     const link = document.createElement('a');
                     link.download = `채용공고_${formData.jobCategory}.png`;
                     link.href = dataUrl;
-                    link.click();tch (e) { console.error(e); }
+                    link.click();
+                } catch (e) { console.error(e); }
                 setIsGenerating(false);
             };
 
