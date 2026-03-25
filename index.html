@@ -9,7 +9,7 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://unpkg.com/dom-to-image-more@3.4.1/dist/dom-to-image-more.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/SUIT.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy.css">
     <style>
@@ -202,13 +202,33 @@
             const handleDownload = async () => {
                 if (!exportRef.current) return;
                 setIsGenerating(true);
-                try {
-                    const canvas = await html2canvas(exportRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+                try try {
+                    // 폰트 완전 로딩 대기
+                    await document.fonts.ready;
+                    
+                    const element = exportRef.current;
+                    const scale = 2;
+                    const width = element.offsetWidth * scale;
+                    const height = element.offsetHeight * scale;
+                    
+                    const dataUrl = await domtoimage.toPng(element, {
+                      width: width,
+                      height: height,
+                      style: {
+                        transform: 'scale(' + scale + ')',
+                        transformOrigin: 'top left',
+                        width: element.offsetWidth + 'px',
+                        height: element.offsetHeight + 'px',
+                      },
+                      quality: 1,
+                      bgcolor: '#f3f4f6',
+                      cacheBust: true,
+                    });
+                    
                     const link = document.createElement('a');
-                    link.download = `로엔서지컬_${formData.jobCategory}.png`;
-                    link.href = canvas.toDataURL('image/png');
-                    link.click();
-                } catch (e) { console.error(e); }
+                    link.download = `채용공고_${formData.jobCategory}.png`;
+                    link.href = dataUrl;
+                    link.click();tch (e) { console.error(e); }
                 setIsGenerating(false);
             };
 
