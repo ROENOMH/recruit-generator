@@ -202,7 +202,7 @@
             const handleDownload = async () => {
                 if (!exportRef.current) return;
                 setIsGenerating(true);
-                try try {
+                try {
                     // 폰트 완전 로딩 대기
                     await document.fonts.ready;
                     
