@@ -287,18 +287,14 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet"></head>
 <body style="margin:0;padding:0;font-family:'Noto Sans KR',sans-serif;">
 
-<!-- 헤더 배너 (텍스트) -->
+<!-- 헤더 이미지 + 텍스트 오버레이 -->
 <div style="background:${blue};width:100%;">
-  <div style="max-width:860px;margin:0 auto;padding:48px 40px 36px;box-sizing:border-box;">
-    <div style="font-size:56px;font-weight:900;color:#fff;letter-spacing:-1px;line-height:1;">${data.recruitmentYear}</div>
-    <div style="font-size:48px;font-weight:900;color:#fff;letter-spacing:4px;line-height:1.1;margin-top:4px;">RECRUITMENT</div>
-  </div>
-</div>
-
-<!-- 헤더 이미지 -->
-<div style="background:${blue};width:100%;">
-  <div style="max-width:860px;margin:0 auto;line-height:0;">
+  <div style="max-width:860px;margin:0 auto;position:relative;line-height:0;">
     <img src="https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-recruit.png" style="width:100%;display:block;" />
+    <div style="position:absolute;top:40px;left:40px;">
+      <div style="font-size:56px;font-weight:900;color:#fff;letter-spacing:-1px;line-height:1;">${data.recruitmentYear}</div>
+      <div style="font-size:48px;font-weight:900;color:#fff;letter-spacing:4px;line-height:1.1;margin-top:4px;">RECRUITMENT</div>
+    </div>
   </div>
 </div>
 
@@ -324,7 +320,7 @@
 <!-- 채용절차 -->
 <div style="max-width:860px;margin:0 auto;padding:0 40px 60px;">
   <div style="font-size:22px;font-weight:800;color:${blue};margin-bottom:32px;">채용절차</div>
-  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:32px;">
+  <div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:16px;margin-bottom:32px;">
     ${processHTML}
   </div>
   ${data.processInfo.map(i => `<div style="color:#555;font-size:15px;margin:8px 0;line-height:1.6;">• ${i}</div>`).join('')}
