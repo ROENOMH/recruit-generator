@@ -253,7 +253,7 @@
 
             const processHTML = steps.map((step, i) => {
                 const isLast = i === steps.length - 1;
-                const circle = `<div style="display:inline-flex;align-items:center;justify-content:center;width:90px;height:90px;border-radius:50%;border:3px solid ${isLast ? blue : '#ccc'};background:${isLast ? blue : '#fff'};color:${isLast ? '#fff' : '#555'};font-weight:700;font-size:14px;text-align:center;">${step}</div>`;
+                const circle = `<div style="display:inline-flex;align-items:center;justify-content:center;width:120px;height:120px;border-radius:50%;border:3px solid ${isLast ? blue : '#ccc'};background:${isLast ? blue : '#fff'};color:${isLast ? '#fff' : '#555'};font-weight:700;font-size:16px;text-align:center;">${step}</div>`;
                 const arrow = i < steps.length - 1 ? `<span style="margin:0 8px;color:#ccc;font-size:20px;">›</span>` : '';
                 return circle + arrow;
             }).join('');
@@ -312,7 +312,7 @@
 <!-- 채용절차 -->
 <div style="max-width:860px;margin:0 auto;padding:0 40px 60px;">
   <div style="font-size:22px;font-weight:800;color:${blue};margin-bottom:32px;">채용절차</div>
-  <div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px;margin-bottom:32px;">
+  <div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;margin-bottom:32px;">
     ${processHTML}
   </div>
   ${data.processInfo.map(i => `<div style="color:#555;font-size:15px;margin:8px 0;line-height:1.6;">• ${i}</div>`).join('')}
