@@ -402,10 +402,7 @@
                             <div ref={exportRef} id="poster-capture" className="w-[860px] bg-white flex flex-col overflow-hidden mx-auto" style={{ letterSpacing: '-0.01em' }}>
                                 <div className="relative w-full overflow-hidden flex flex-col bg-[#00238D]">
                                     <img src={recruitImgSrc} className="w-full h-auto block" />
-                                    <div className="absolute top-[108px] left-[60px] text-white text-left flex flex-col items-start font-paperlogy-eb" style={{ fontSize: '85px', letterSpacing: '0.03em', textShadow: '0 4px 12px rgba(0,0,0,0.4)', lineHeight: '0.85' }}>
-                                        <EditableText value={formData.recruitmentYear} onSave={(v) => setFormData({...formData, recruitmentYear: v})} className="block" />
-                                        <div style={{ marginTop: '-10px' }}>RECRUITMENT</div>
-                                    </div>
+
                                 </div>
                                 <div className="bg-[#00238D] text-white text-center py-9 flex flex-col items-center justify-center gap-1">
                                     <div className="flex items-center gap-2 justify-center">
