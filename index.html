@@ -25,20 +25,64 @@
     <script type="text/babel">
     const { useState, useRef, useEffect, Fragment } = React;
 
-    // 이미지를 base64로 변환하는 헬퍼 함수
-    async function imageUrlToBase64(url) {
+    // URL을 base64로 변환
+    async function urlToBase64(url) {
         try {
-            const response = await fetch(url);
-            const blob = await response.blob();
+            const res = await fetch(url);
+            const blob = await res.blob();
             return new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onloadend = () => resolve(reader.result);
                 reader.readAsDataURL(blob);
             });
-        } catch (e) {
-            console.warn('이미지 로드 실패:', url, e);
-            return url;
+        } catch(e) { return url; }
+    }
+
+    // 페이지의 모든 @font-face를 수집해 base64로 변환한 CSS 반환
+    async function getFontsAsBase64CSS() {
+        const fontFaces = [];
+        for (const sheet of Array.from(document.styleSheets)) {
+            try {
+                const rules = Array.from(sheet.cssRules || []);
+                for (const rule of rules) {
+                    if (rule instanceof CSSFontFaceRule) {
+                        fontFaces.push(rule.cssText);
+                    }
+                }
+            } catch(e) {}
         }
+        // 실제 로드된 FontFace API 사용
+        const loadedFonts = Array.from(document.fonts);
+        const cssParts = [];
+        for (const font of loadedFonts) {
+            try {
+                await font.load();
+            } catch(e) {}
+        }
+        // stylesheet에서 woff2 URL 추출하여 base64로 변환
+        const processedCSS = [];
+        for (const sheet of Array.from(document.styleSheets)) {
+            try {
+                const rules = Array.from(sheet.cssRules || []);
+                for (const rule of rules) {
+                    if (rule instanceof CSSFontFaceRule) {
+                        let cssText = rule.cssText;
+                        const urlMatches = cssText.match(/url\(["']?([^"')]+)["']?\)/g) || [];
+                        for (const urlMatch of urlMatches) {
+                            const rawUrl = urlMatch.replace(/url\(["']?/, '').replace(/["']?\)$/, '');
+                            if (rawUrl.startsWith('data:')) continue;
+                            const absoluteUrl = new URL(rawUrl, sheet.href || location.href).href;
+                            try {
+                                const b64 = await urlToBase64(absoluteUrl);
+                                cssText = cssText.replace(urlMatch, `url("${b64}")`);
+                            } catch(e) {}
+                        }
+                        processedCSS.push(cssText);
+                    }
+                }
+            } catch(e) {}
+        }
+        return processedCSS.join('\n');
     }
 
     const Icon = ({ name, className }) => {
@@ -130,18 +174,20 @@
             if (!exportRef.current) return;
             setIsGenerating(true);
             try {
+                // 폰트 로딩 완료 대기
                 await document.fonts.ready;
 
-                // 이미지를 base64로 미리 변환 (CORS 우회)
+                // 이미지 base64 변환 (CORS 우회)
                 const [recruitBase64, cultureBase64] = await Promise.all([
-                    imageUrlToBase64(IMG_RECRUIT),
-                    imageUrlToBase64(IMG_CULTURE)
+                    urlToBase64(IMG_RECRUIT),
+                    urlToBase64(IMG_CULTURE)
                 ]);
                 setRecruitImgSrc(recruitBase64);
                 setCultureImgSrc(cultureBase64);
+                await new Promise(r => setTimeout(r, 300));
 
-                // 이미지 교체 후 렌더링 대기
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // 폰트 CSS를 base64로 변환하여 클론된 문서에 주입
+                const fontCSS = await getFontsAsBase64CSS();
 
                 const canvas = await html2canvas(exportRef.current, {
                     scale: 2,
@@ -150,10 +196,18 @@
                     backgroundColor: '#ffffff',
                     logging: false,
                     onclone: (clonedDoc) => {
-                        const styleEl = clonedDoc.createElement('style');
-                        styleEl.textContent = `.editable-preview { outline: none !important; background: transparent !important; cursor: default !important; }
+                        // editable 스타일 제거
+                        const s1 = clonedDoc.createElement('style');
+                        s1.textContent = `.editable-preview { outline: none !important; background: transparent !important; cursor: default !important; }
 .editable-preview:hover { outline: none !important; background: transparent !important; }`;
-                        clonedDoc.head.appendChild(styleEl);
+                        clonedDoc.head.appendChild(s1);
+
+                        // base64 폰트 주입
+                        if (fontCSS) {
+                            const s2 = clonedDoc.createElement('style');
+                            s2.textContent = fontCSS;
+                            clonedDoc.head.appendChild(s2);
+                        }
                     }
                 });
 
@@ -162,12 +216,11 @@
                 link.href = canvas.toDataURL('image/png');
                 link.click();
 
-                // 이미지 원복
                 setRecruitImgSrc(IMG_RECRUIT);
                 setCultureImgSrc(IMG_CULTURE);
-            } catch (e) {
+            } catch(e) {
                 console.error(e);
-                alert('다운로드 오류: ' + e.message);
+                alert('오류: ' + e.message);
                 setRecruitImgSrc(IMG_RECRUIT);
                 setCultureImgSrc(IMG_CULTURE);
             }
@@ -266,11 +319,11 @@
                                 </div>
                                 <div className="bg-white px-[60px] pb-24">
                                     <h3 className="text-[#00238D] text-[26px] font-[800] mb-12">채용절차</h3>
-                                    <div className="flex justify-between items-center w-full mb-14 px-2 no-wrap overflow-hidden">
+                                    <div className="flex justify-between items-center w-full mb-14 px-2 overflow-hidden">
                                         {formData.processSteps.map((step, idx) => (
                                             <Fragment key={idx}>
                                                 <div className="flex flex-col items-center flex-1 min-w-0">
-                                                    <div className={`aspect-square rounded-full border-[3px] flex items-center justify-center font-bold shadow-sm transition-all ${idx === formData.processSteps.length - 1 ? 'bg-[#00238D] text-white border-[#00238D] shadow-lg' : 'border-gray-300 text-gray-700 bg-white'} ${formData.processSteps.length > 5 ? 'w-24 h-24 text-[16px]' : 'w-32 h-32 text-[22px]'}`}>
+                                                    <div className={`aspect-square rounded-full border-[3px] flex items-center justify-center font-bold shadow-sm ${idx === formData.processSteps.length - 1 ? 'bg-[#00238D] text-white border-[#00238D] shadow-lg' : 'border-gray-300 text-gray-700 bg-white'} ${formData.processSteps.length > 5 ? 'w-24 h-24 text-[16px]' : 'w-32 h-32 text-[22px]'}`}>
                                                         <EditableText value={step} onSave={(v) => updateListField('processSteps', idx, v)} className="text-center px-1 break-keep" />
                                                     </div>
                                                 </div>
