@@ -8,7 +8,6 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/SUIT.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy.css">
     <style>
@@ -228,61 +227,121 @@
             notices: ['서류 합격자에 한하여 전형이 진행됩니다.', '최종합격 시, 합격자에게만 개별 통보 문자가 전달됩니다.', '이력서에 기재된 학력 및 경력사항 등 기재 사항이 허위임이 판명될 경우, 합격이 취소 될 수 있습니다.']
         });
 
-        const handleDownload = async () => {
-            if (!exportRef.current) return;
-            setIsGenerating(true);
-            try {
-                // 폰트 로딩 완료 대기
-                await document.fonts.ready;
+        const handleDownload = () => {
+            // 사람인 HTML 에디터용 인라인 스타일 HTML 생성
+            const html = generateSaraminHTML(formData);
+            const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+            const link = document.createElement('a');
+            link.download = `채용공고_${formData.jobCategory}.html`;
+            link.href = URL.createObjectURL(blob);
+            link.click();
+            URL.revokeObjectURL(link.href);
+        };
 
-                // 이미지 base64 변환 (CORS 우회)
-                const [recruitBase64, cultureBase64] = await Promise.all([
-                    urlToBase64(IMG_RECRUIT),
-                    urlToBase64(IMG_CULTURE)
-                ]);
-                setRecruitImgSrc(recruitBase64);
-                setCultureImgSrc(cultureBase64);
-                await new Promise(r => setTimeout(r, 300));
+        const generateSaraminHTML = (data) => {
+            const blue = '#00238D';
+            const darkBg = '#0F1B3A';
+            const steps = data.processSteps;
 
-                // 폰트 CSS를 base64로 변환하여 클론된 문서에 주입
-                const fontCSS = await getFontsAsBase64CSS();
+            const tableRow = (label, content) => `
+<tr>
+  <td style="width:160px;padding:20px 16px;font-weight:900;color:${blue};font-size:16px;background:#f8f9fa;border-bottom:1px solid #dee2e6;vertical-align:middle;text-align:center;">${label}</td>
+  <td style="padding:20px 16px;color:#333;font-size:15px;line-height:1.8;border-bottom:1px solid #dee2e6;vertical-align:middle;">${content}</td>
+</tr>`;
 
-                const canvas = await html2canvas(exportRef.current, {
-                    scale: 2,
-                    useCORS: true,
-                    allowTaint: true,
-                    backgroundColor: '#ffffff',
-                    logging: false,
-                    onclone: (clonedDoc) => {
-                        // editable 스타일 제거
-                        const s1 = clonedDoc.createElement('style');
-                        s1.textContent = `.editable-preview { outline: none !important; background: transparent !important; cursor: default !important; }
-.editable-preview:hover { outline: none !important; background: transparent !important; }`;
-                        clonedDoc.head.appendChild(s1);
+            const bulletList = (items) => items.map(i => `<div style="margin:4px 0;">- ${i}</div>`).join('');
 
-                        // base64 폰트 주입
-                        if (fontCSS) {
-                            const s2 = clonedDoc.createElement('style');
-                            s2.textContent = fontCSS;
-                            clonedDoc.head.appendChild(s2);
-                        }
-                    }
-                });
+            const processHTML = steps.map((step, i) => {
+                const isLast = i === steps.length - 1;
+                const circle = `<div style="display:inline-flex;align-items:center;justify-content:center;width:90px;height:90px;border-radius:50%;border:3px solid ${isLast ? blue : '#ccc'};background:${isLast ? blue : '#fff'};color:${isLast ? '#fff' : '#555'};font-weight:700;font-size:14px;text-align:center;">${step}</div>`;
+                const arrow = i < steps.length - 1 ? `<span style="margin:0 8px;color:#ccc;font-size:20px;">›</span>` : '';
+                return circle + arrow;
+            }).join('');
 
-                const link = document.createElement('a');
-                link.download = `채용공고_${formData.jobCategory}.png`;
-                link.href = canvas.toDataURL('image/png');
-                link.click();
+            const benefitsHTML = data.benefits.map(b => {
+                const parts = b.trim().split(' ');
+                const emoji = parts[0];
+                const title = parts.slice(1).join(' ');
+                return `<td style="width:20%;padding:16px 8px;text-align:center;vertical-align:top;">
+  <div style="width:80px;height:80px;border-radius:20px;background:#000B2C;display:inline-flex;align-items:center;justify-content:center;font-size:40px;margin-bottom:8px;">${emoji}</div>
+  <div style="color:rgba(255,255,255,0.85);font-size:13px;line-height:1.4;">${title}</div>
+</td>`;
+            }).join('');
 
-                setRecruitImgSrc(IMG_RECRUIT);
-                setCultureImgSrc(IMG_CULTURE);
-            } catch(e) {
-                console.error(e);
-                alert('오류: ' + e.message);
-                setRecruitImgSrc(IMG_RECRUIT);
-                setCultureImgSrc(IMG_CULTURE);
+            // 5개씩 줄바꿈
+            const benefitRows = [];
+            for (let i = 0; i < data.benefits.length; i += 5) {
+                const rowItems = data.benefits.slice(i, i + 5);
+                const cells = rowItems.map(b => {
+                    const parts = b.trim().split(' ');
+                    const emoji = parts[0];
+                    const title = parts.slice(1).join(' ');
+                    return `<td style="width:20%;padding:16px 8px;text-align:center;vertical-align:top;"><div style="width:80px;height:80px;border-radius:20px;background:#000B2C;display:inline-flex;align-items:center;justify-content:center;font-size:40px;margin-bottom:8px;">${emoji}</div><div style="color:rgba(255,255,255,0.85);font-size:13px;line-height:1.4;">${title}</div></td>`;
+                }).join('');
+                benefitRows.push(`<tr>${cells}</tr>`);
             }
-            setIsGenerating(false);
+
+            return `<!DOCTYPE html>
+<html lang="ko">
+<head><meta charset="UTF-8"><title>채용공고</title></head>
+<body style="margin:0;padding:0;font-family:'맑은 고딕','Apple SD Gothic Neo',sans-serif;">
+
+<!-- 헤더 이미지 -->
+<div style="background:${blue};text-align:center;">
+  <img src="https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-recruit.png" style="width:100%;max-width:860px;display:block;margin:0 auto;" />
+</div>
+
+<!-- 직무 타이틀 -->
+<div style="background:${blue};color:#fff;text-align:center;padding:32px 20px;">
+  <span style="font-size:26px;font-weight:700;">${data.jobCategory}</span>
+  <span style="font-size:18px;font-weight:400;margin-left:8px;opacity:0.9;">${data.experienceLevel}</span>
+</div>
+
+<!-- 상세 요건 테이블 -->
+<div style="max-width:860px;margin:0 auto;padding:40px 40px;">
+  <table style="width:100%;border-collapse:collapse;border-top:3px solid ${blue};border-bottom:3px solid ${blue};">
+    ${tableRow('모집분야', data.department)}
+    ${tableRow('주요업무', bulletList(data.responsibilities))}
+    ${tableRow('자격요건', bulletList(data.qualifications))}
+    ${data.preferred.length > 0 ? tableRow('우대사항', bulletList(data.preferred)) : ''}
+    ${tableRow('근무조건', bulletList(data.employmentType))}
+  </table>
+</div>
+
+<!-- 채용절차 -->
+<div style="max-width:860px;margin:0 auto;padding:0 40px 60px;">
+  <div style="font-size:22px;font-weight:800;color:${blue};margin-bottom:32px;">채용절차</div>
+  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:32px;">
+    ${processHTML}
+  </div>
+  ${data.processInfo.map(i => `<div style="color:#555;font-size:15px;margin:8px 0;line-height:1.6;">• ${i}</div>`).join('')}
+</div>
+
+<!-- 유의사항 -->
+<div style="max-width:860px;margin:0 auto;padding:0 40px 60px;">
+  <div style="font-size:22px;font-weight:800;color:${blue};margin-bottom:20px;">유의사항</div>
+  ${data.notices.map(n => `<div style="color:#555;font-size:15px;margin:8px 0;line-height:1.6;">• ${n}</div>`).join('')}
+</div>
+
+<!-- 구분선 -->
+<div style="background:${blue};height:20px;"></div>
+
+<!-- 복지 -->
+<div style="background:${darkBg};padding:60px 40px;text-align:center;">
+  <div style="font-size:30px;font-weight:700;color:#fff;margin-bottom:12px;">로엔서지컬의 복지</div>
+  <div style="font-size:16px;color:rgba(255,255,255,0.75);margin-bottom:40px;">로엔서지컬은 사내 직원분들의 편의와 업무 능력 향상을 위해 다양한 방법으로 지원하고 있습니다.</div>
+  <table style="width:100%;max-width:780px;margin:0 auto;border-collapse:collapse;">
+    ${benefitRows.join('')}
+  </table>
+</div>
+
+<!-- 하단 이미지 -->
+<div style="background:${darkBg};">
+  <img src="https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-culture.png" style="width:100%;max-width:860px;display:block;margin:0 auto;" />
+</div>
+
+</body>
+</html>`;
         };
 
         const updateListField = (field, index, newValue) => {
@@ -312,7 +371,7 @@
                         <div className="flex justify-between items-center mb-6 border-b pb-4">
                             <h2 className="font-bold flex items-center gap-2"><Icon name="PlusCircle" className="w-5 h-5 text-gray-400" />모집 내용 수정</h2>
                             <button onClick={handleDownload} disabled={isGenerating} className="bg-[#00238D] hover:bg-[#001A6A] text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition disabled:opacity-50 shadow-md">
-                                {isGenerating ? '생성 중...' : <><Icon name="Download" className="w-4 h-4" /> 다운로드</>}
+                                <><Icon name="Download" className="w-4 h-4" /> HTML 다운로드</>
                             </button>
                         </div>
                         <div className="space-y-6">
