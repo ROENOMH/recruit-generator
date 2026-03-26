@@ -113,11 +113,64 @@
         return <div onClick={() => setIsEditing(true)} className={`editable-preview transition-all px-1 -mx-1 min-h-[1.2em] min-w-[20px] ${className}`}>{value || <span className="text-gray-300 italic">(비어있음)</span>}</div>;
     };
 
-    const DraggableListInput = ({ items, onChange, placeholder, isAiLoading }) => {
+    // 이모지 피커 컴포넌트
+    const EMOJI_CATEGORIES = [
+        { label: '🌟 자주 쓰는', emojis: ['☕','🧋','🍦','🥗','🍱','🎂','🎁','💐','🏆','⭐','✨','🎉'] },
+        { label: '💼 복지/혜택', emojis: ['📘','📓','📅','💸','📈','📊','🛋️','🤱','😁','💪','🧘','🏃'] },
+        { label: '🏢 회사생활', emojis: ['💻','🖥️','📱','🖨️','📞','📋','📌','📎','🗂️','🗃️','📂','🗄️'] },
+        { label: '❤️ 감사/지원', emojis: ['🎓','🏥','🚗','✈️','🏠','💊','👶','🐶','🎮','🎵','🎨','📷'] },
+        { label: '💰 금전/보험', emojis: ['💰','💵','💴','💳','🏦','💎','🪙','💹','📉','📈','🤝','🔑'] },
+    ];
+
+    const EmojiPicker = ({ onSelect }) => {
+        const [open, setOpen] = useState(false);
+        const [activeTab, setActiveTab] = useState(0);
+        const ref = useRef(null);
+
+        useEffect(() => {
+            const handleClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+            document.addEventListener('mousedown', handleClick);
+            return () => document.removeEventListener('mousedown', handleClick);
+        }, []);
+
+        return (
+            <div className="relative" ref={ref}>
+                <button type="button" onClick={() => setOpen(o => !o)}
+                    className="w-10 h-10 flex items-center justify-center text-xl rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#00238D] transition-all shadow-sm"
+                    title="이모지 선택">
+                    😊
+                </button>
+                {open && (
+                    <div className="absolute bottom-12 left-0 z-50 bg-white border border-gray-200 rounded-xl shadow-2xl w-72 overflow-hidden">
+                        <div className="flex border-b border-gray-100 overflow-x-auto">
+                            {EMOJI_CATEGORIES.map((cat, i) => (
+                                <button key={i} onClick={() => setActiveTab(i)}
+                                    className={`px-3 py-2 text-xs whitespace-nowrap transition-all ${activeTab === i ? 'bg-[#00238D] text-white font-bold' : 'text-gray-500 hover:bg-gray-50'}`}>
+                                    {cat.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="grid grid-cols-6 gap-1 p-3">
+                            {EMOJI_CATEGORIES[activeTab].emojis.map((emoji, i) => (
+                                <button key={i} onClick={() => { onSelect(emoji); setOpen(false); }}
+                                    className="w-10 h-10 flex items-center justify-center text-2xl rounded-lg hover:bg-gray-100 transition-all"
+                                    title={emoji}>
+                                    {emoji}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const DraggableListInput = ({ items, onChange, placeholder, isAiLoading, showEmojiPicker = false }) => {
         const [inputValue, setInputValue] = useState('');
         const [draggedIdx, setDraggedIdx] = useState(null);
         const [editingIdx, setEditingIdx] = useState(null);
         const [editValue, setEditValue] = useState('');
+        const inputRef = useRef(null);
         const handleKeyDown = (e) => { if (e.key === 'Enter' && inputValue.trim() !== '') { e.preventDefault(); onChange([...items, inputValue.trim()]); setInputValue(''); } };
         const handleDragStart = (e, idx) => { setDraggedIdx(idx); e.dataTransfer.effectAllowed = 'move'; };
         const handleDragEnter = (idx) => {
@@ -125,6 +178,10 @@
             const newItems = [...items]; const draggedItem = newItems[draggedIdx];
             newItems.splice(draggedIdx, 1); newItems.splice(idx, 0, draggedItem);
             setDraggedIdx(idx); onChange(newItems);
+        };
+        const handleEmojiSelect = (emoji) => {
+            setInputValue(prev => emoji + ' ' + prev);
+            if (inputRef.current) inputRef.current.focus();
         };
         return (
             <div className="w-full flex flex-col gap-2 relative">
@@ -140,8 +197,9 @@
                         <button onClick={() => onChange(items.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Icon name="X" className="w-4 h-4" /></button>
                     </div>
                 ))}
-                <div className="relative">
-                    <input type="text" value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={handleKeyDown} placeholder={isAiLoading ? "생성 중..." : placeholder} disabled={isAiLoading} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:ring-4 focus:ring-[#00238D]/10 outline-none text-sm transition-all shadow-inner" />
+                <div className="relative flex gap-2 items-center">
+                    {showEmojiPicker && <EmojiPicker onSelect={handleEmojiSelect} />}
+                    <input ref={inputRef} type="text" value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={handleKeyDown} placeholder={isAiLoading ? "생성 중..." : placeholder} disabled={isAiLoading} className="flex-1 p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:ring-4 focus:ring-[#00238D]/10 outline-none text-sm transition-all shadow-inner" />
                     {isAiLoading && <Icon name="Loader2" className="absolute right-3 top-3 w-4 h-4 text-[#00238D]" />}
                 </div>
             </div>
@@ -267,7 +325,7 @@
                             <div><label className="block text-sm font-bold text-gray-700 mb-2">채용 단계</label><DraggableListInput items={formData.processSteps} onChange={v => setFormData({...formData, processSteps: v})} placeholder="단계 추가 후 Enter" /></div>
                             <div><label className="block text-sm font-bold text-gray-700 mb-2">채용 안내 정보</label><DraggableListInput items={formData.processInfo} onChange={v => setFormData({...formData, processInfo: v})} placeholder="상세 정보 추가 후 Enter" /></div>
                             <div><label className="block text-sm font-bold text-gray-700 mb-2">유의사항</label><DraggableListInput items={formData.notices} onChange={v => setFormData({...formData, notices: v})} placeholder="유의사항 추가 후 Enter" /></div>
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">복지 혜택</label><DraggableListInput items={formData.benefits} onChange={v => setFormData({...formData, benefits: v})} placeholder="복지 추가 후 Enter (예: ☕ 커피)" /></div>
+                            <div><label className="block text-sm font-bold text-gray-700 mb-2">복지 혜택</label><DraggableListInput items={formData.benefits} onChange={v => setFormData({...formData, benefits: v})} placeholder="이모지 선택 후 내용 입력 후 Enter" showEmojiPicker={true} /></div>
                             <hr className="border-gray-100" />
                             <div><label className="block text-sm font-bold text-gray-700 mb-2">주요 업무</label><DraggableListInput items={formData.responsibilities} onChange={v => setFormData({...formData, responsibilities: v})} placeholder="업무 추가 후 Enter" /></div>
                             <div><label className="block text-sm font-bold text-gray-700 mb-2">자격 요건</label><DraggableListInput items={formData.qualifications} onChange={v => setFormData({...formData, qualifications: v})} placeholder="요건 추가 후 Enter" /></div>
