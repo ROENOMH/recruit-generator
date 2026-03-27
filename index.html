@@ -8,15 +8,28 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/SUIT.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy.css">
+    
+    <!-- 글자 깨짐 현상이 없는 원본 렌더링 라이브러리 유지 -->
+    <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@3.4.0/dist/dom-to-image-more.min.js"></script>
+    
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/SUIT.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" crossorigin="anonymous">
     <style>
         body { font-family: 'SUIT', sans-serif; background-color: #f3f4f6; }
         .font-paperlogy-eb { font-family: 'Paperlogy', sans-serif !important; font-weight: 800 !important; }
         .cursor-grabbing { cursor: grabbing !important; }
+        /* 편집 모드 스타일: 캡처 시에는 이 클래스만 제거되어 아웃라인과 배경색이 사라집니다. */
         .editable-preview:hover { background-color: rgba(59,130,246,0.05); outline: 2px dashed rgba(59,130,246,0.3); border-radius: 4px; cursor: text; }
         .editable-preview:focus { background-color: rgba(59,130,246,0.1); outline: 2px solid rgba(59,130,246,0.5); border-radius: 4px; }
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap');
+        
+        /* [핵심 해결 방법] Tailwind CSS + dom-to-image 유령 테두리(Ghost Borders) 완벽 차단 */
+        #poster-capture *:not(.has-border) {
+            border-style: none !important;
+            border-width: 0 !important;
+            border-color: transparent !important;
+            outline: none !important;
+        }
     </style>
 </head>
 <body>
@@ -24,95 +37,101 @@
     <script type="text/babel">
     const { useState, useRef, useEffect, Fragment } = React;
 
-    // URL을 base64로 변환
-    async function urlToBase64(url) {
-        try {
-            const res = await fetch(url);
-            const blob = await res.blob();
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result);
-                reader.readAsDataURL(blob);
-            });
-        } catch(e) { return url; }
-    }
+    const ExportContext = React.createContext(false);
 
-    // 페이지의 모든 @font-face를 수집해 base64로 변환한 CSS 반환
-    async function getFontsAsBase64CSS() {
-        const fontFaces = [];
-        for (const sheet of Array.from(document.styleSheets)) {
-            try {
-                const rules = Array.from(sheet.cssRules || []);
-                for (const rule of rules) {
-                    if (rule instanceof CSSFontFaceRule) {
-                        fontFaces.push(rule.cssText);
-                    }
+    const SUIT_WEIGHTS = [
+        { weight: '400', file: 'SUIT-Regular.woff2' },
+        { weight: '500', file: 'SUIT-Medium.woff2' },
+        { weight: '600', file: 'SUIT-SemiBold.woff2' },
+        { weight: '700', file: 'SUIT-Bold.woff2' },
+        { weight: '800', file: 'SUIT-ExtraBold.woff2' },
+        { weight: '900', file: 'SUIT-Heavy.woff2' },
+    ];
+    const SUIT_BASE = 'https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/';
+
+    async function embedSUITFontsToDOM() {
+        if (document.getElementById('suit-b64-embedded')) return;
+
+        const fontFaces = await Promise.all(
+            SUIT_WEIGHTS.map(async ({ weight, file }) => {
+                try {
+                    const resp = await fetch(SUIT_BASE + file, { mode: 'cors' });
+                    const blob = await resp.blob();
+                    const dataUrl = await new Promise(resolve => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                    });
+                    return `@font-face { font-family: 'SUIT'; src: url('${dataUrl}') format('woff2'); font-weight: ${weight}; font-style: normal; }`;
+                } catch(e) {
+                    console.warn(`SUIT ${weight} 로딩 실패:`, e);
+                    return null;
                 }
-            } catch(e) {}
-        }
-        // 실제 로드된 FontFace API 사용
-        const loadedFonts = Array.from(document.fonts);
-        const cssParts = [];
-        for (const font of loadedFonts) {
-            try {
-                await font.load();
-            } catch(e) {}
-        }
-        // stylesheet에서 woff2 URL 추출하여 base64로 변환
-        const processedCSS = [];
-        for (const sheet of Array.from(document.styleSheets)) {
-            try {
-                const rules = Array.from(sheet.cssRules || []);
-                for (const rule of rules) {
-                    if (rule instanceof CSSFontFaceRule) {
-                        let cssText = rule.cssText;
-                        const urlMatches = cssText.match(/url\(["']?([^"')]+)["']?\)/g) || [];
-                        for (const urlMatch of urlMatches) {
-                            const rawUrl = urlMatch.replace(/url\(["']?/, '').replace(/["']?\)$/, '');
-                            if (rawUrl.startsWith('data:')) continue;
-                            const absoluteUrl = new URL(rawUrl, sheet.href || location.href).href;
-                            try {
-                                const b64 = await urlToBase64(absoluteUrl);
-                                cssText = cssText.replace(urlMatch, `url("${b64}")`);
-                            } catch(e) {}
-                        }
-                        processedCSS.push(cssText);
-                    }
-                }
-            } catch(e) {}
-        }
-        return processedCSS.join('\n');
+            })
+        );
+
+        const validFaces = fontFaces.filter(Boolean);
+        if (validFaces.length === 0) return;
+
+        const style = document.createElement('style');
+        style.id = 'suit-b64-embedded';
+        style.textContent = validFaces.join('\n');
+        document.head.insertBefore(style, document.head.firstChild);
+
+        await document.fonts.ready;
     }
 
     const Icon = ({ name, className }) => {
         const icons = {
-            Download: <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4m4-5 5 5 5-5m-5 5V3"/></svg>,
+            Image: <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>,
             PlusCircle: <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v8m-4-4h8"/></svg>,
             Layout: <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M3 9h18m-9-6v18"/></svg>,
             ChevronRight: <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>,
             X: <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>,
             GripVertical: <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>,
-            Loader2: <svg className={`${className} animate-spin`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            Loader2: <svg className={`${className} animate-spin`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>,
+            RefreshCw: <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
         };
         return icons[name] || null;
     };
 
     const EditableText = ({ value, onSave, className, multiline = false }) => {
+        const isExporting = React.useContext(ExportContext);
         const [isEditing, setIsEditing] = useState(false);
         const [localValue, setLocalValue] = useState(value);
         const inputRef = useRef(null);
+        
         useEffect(() => { setLocalValue(value); }, [value]);
+        
         const handleBlur = () => { setIsEditing(false); if (localValue !== value) onSave(localValue); };
         const handleKeyDown = (e) => { if (e.key === 'Enter' && !multiline) { e.preventDefault(); inputRef.current.blur(); } };
+        
+        const renderValue = (val) => {
+            if (!val) return <span className="text-gray-300 italic">(비어있음)</span>;
+            if (typeof val === 'string' && val.includes('<br')) {
+                return val.split(/<br\s*\/?>/i).map((part, index, arr) => (
+                    <Fragment key={index}>
+                        {part}
+                        {index < arr.length - 1 && <br />}
+                    </Fragment>
+                ));
+            }
+            return val;
+        };
+
+        if (isExporting) {
+            return <div className={className || ''}>{renderValue(value)}</div>;
+        }
+
         if (isEditing) {
             return multiline
-                ? <textarea ref={inputRef} className={`w-full p-1 bg-blue-50 text-gray-800 outline-none border border-blue-400 rounded ${className}`} value={localValue} onChange={(e) => setLocalValue(e.target.value)} onBlur={handleBlur} autoFocus />
-                : <input ref={inputRef} className={`w-full p-1 bg-blue-50 text-inherit outline-none border border-blue-400 rounded ${className}`} value={localValue} onChange={(e) => setLocalValue(e.target.value)} onBlur={handleBlur} onKeyDown={handleKeyDown} autoFocus />;
+                ? <textarea ref={inputRef} className={`w-full p-1 bg-blue-50 text-gray-800 outline-none border border-blue-400 rounded ${className || ''}`} value={localValue} onChange={(e) => setLocalValue(e.target.value)} onBlur={handleBlur} autoFocus />
+                : <input ref={inputRef} className={`w-full p-1 bg-blue-50 text-inherit outline-none border border-blue-400 rounded ${className || ''}`} value={localValue} onChange={(e) => setLocalValue(e.target.value)} onBlur={handleBlur} onKeyDown={handleKeyDown} autoFocus />;
         }
-        return <div onClick={() => setIsEditing(true)} className={`editable-preview transition-all px-1 -mx-1 min-h-[1.2em] min-w-[20px] ${className}`}>{value || <span className="text-gray-300 italic">(비어있음)</span>}</div>;
+        
+        return <div onClick={() => setIsEditing(true)} className={`editable-preview transition-all px-1 -mx-1 min-h-[1.2em] min-w-[20px] ${className || ''}`}>{renderValue(value)}</div>;
     };
 
-    // 이모지 피커 컴포넌트
     const EMOJI_CATEGORIES = [
         { label: '🌟 자주 쓰는', emojis: ['☕','🧋','🍦','🥗','🍱','🎂','🎁','💐','🏆','⭐','✨','🎉'] },
         { label: '💼 복지/혜택', emojis: ['📘','📓','📅','💸','📈','📊','🛋️','🤱','😁','💪','🧘','🏃'] },
@@ -125,37 +144,24 @@
         const [open, setOpen] = useState(false);
         const [activeTab, setActiveTab] = useState(0);
         const ref = useRef(null);
-
         useEffect(() => {
             const handleClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
             document.addEventListener('mousedown', handleClick);
             return () => document.removeEventListener('mousedown', handleClick);
         }, []);
-
         return (
             <div className="relative" ref={ref}>
-                <button type="button" onClick={() => setOpen(o => !o)}
-                    className="w-10 h-10 flex items-center justify-center text-xl rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#00238D] transition-all shadow-sm"
-                    title="이모지 선택">
-                    😊
-                </button>
+                <button type="button" onClick={() => setOpen(o => !o)} className="w-10 h-10 flex items-center justify-center text-xl rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#00238D] transition-all shadow-sm" title="이모지 선택">😊</button>
                 {open && (
                     <div className="absolute bottom-12 left-0 z-50 bg-white border border-gray-200 rounded-xl shadow-2xl w-72 overflow-hidden">
                         <div className="flex border-b border-gray-100 overflow-x-auto">
                             {EMOJI_CATEGORIES.map((cat, i) => (
-                                <button key={i} onClick={() => setActiveTab(i)}
-                                    className={`px-3 py-2 text-xs whitespace-nowrap transition-all ${activeTab === i ? 'bg-[#00238D] text-white font-bold' : 'text-gray-500 hover:bg-gray-50'}`}>
-                                    {cat.label}
-                                </button>
+                                <button key={i} onClick={() => setActiveTab(i)} className={`px-3 py-2 text-xs whitespace-nowrap transition-all ${activeTab === i ? 'bg-[#00238D] text-white font-bold' : 'text-gray-500 hover:bg-gray-50'}`}>{cat.label}</button>
                             ))}
                         </div>
                         <div className="grid grid-cols-6 gap-1 p-3">
                             {EMOJI_CATEGORIES[activeTab].emojis.map((emoji, i) => (
-                                <button key={i} onClick={() => { onSelect(emoji); setOpen(false); }}
-                                    className="w-10 h-10 flex items-center justify-center text-2xl rounded-lg hover:bg-gray-100 transition-all"
-                                    title={emoji}>
-                                    {emoji}
-                                </button>
+                                <button key={i} onClick={() => { onSelect(emoji); setOpen(false); }} className="w-10 h-10 flex items-center justify-center text-2xl rounded-lg hover:bg-gray-100 transition-all" title={emoji}>{emoji}</button>
                             ))}
                         </div>
                     </div>
@@ -199,7 +205,6 @@
                 <div className="relative flex gap-2 items-center">
                     {showEmojiPicker && <EmojiPicker onSelect={handleEmojiSelect} />}
                     <input ref={inputRef} type="text" value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={handleKeyDown} placeholder={isAiLoading ? "생성 중..." : placeholder} disabled={isAiLoading} className="flex-1 p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:ring-4 focus:ring-[#00238D]/10 outline-none text-sm transition-all shadow-inner" />
-                    {isAiLoading && <Icon name="Loader2" className="absolute right-3 top-3 w-4 h-4 text-[#00238D]" />}
                 </div>
             </div>
         );
@@ -208,152 +213,158 @@
     const IMG_RECRUIT = 'https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-recruit.png';
     const IMG_CULTURE = 'https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-culture.png';
 
+    // [수정] 입력 폼에서는 괄호가 없는 순수 텍스트를 기본으로 하도록 변경
+    const defaultFormData = {
+        jobCategory: 'Full Stack (프론트/백엔드) 개발자', experienceLevel: '경력/신입', 
+        department: 'IT전략 (플랫폼 개발팀)', education: '무관 (졸업예정자 가능)', major: '컴퓨터공학 관련',
+        companyUrl: 'https://www.roensurgical.com',
+        responsibilities: ['신규 서비스 기획 및 프론트엔드/백엔드 개발', '신규/기존 서비스 웹퍼블리싱(퍼블리셔 협업)', '외부 API 연동', '코드 리뷰'],
+        qualifications: ['React, Vue 등 SPA 프레임워크 유경험자', 'Node.js/Spring Boot 등 백엔드 개발 유경험자', 'RDBMS 활용 및 SQL 작성 가능자'],
+        preferred: ['AWS, GCP 등 클라우드 서비스 경험자', '배포 자동화 (CI/CD) 구축/운영 경험자'],
+        employmentType: ['정규직 (수습기간 3개월, 급여 100% 지급)', '주 5일(월~금) / 유연근무제 운영', '4대 보험 적용'],
+        benefits: ['🧋 음료(차, 커피) 제공','🍦 맞춤 간식 제공','🥗 점심 식권 제공','📘 교육 지원','📓 사무용품 제공','📈 스톡옵션','📊 우리사주제도 운영','😁 유연근무제','🛋️ 경조휴가','🤱 육아휴직','📅 자유로운<br />연/반차','💸 퇴직 연금','💐 경조사 지원','🎂 생일 선물 제공'],
+        processSteps: ['서류전형', '1차 면접', '2차 면접', '입사'],
+        processInfo: ['접수 기간 : 채용시~2026-12-31', '문의 및 접수 방법 : 042-867-1231, hr@roensurgical.com', '이력서 양식 : 사람인 이력서 제출 (자기소개서와 경력 기술서 필수)'],
+        notices: ['서류 합격자에 한하여 전형이 진행됩니다.', '최종합격 시, 합격자에게만 개별 통보 문자가 전달됩니다.', '이력서에 기재된 학력 및 경력사항 등 기재 사항이 허위임이 판명될 경우, 합격 취소 될 수 있습니다.']
+    };
+
     function App() {
         const exportRef = useRef(null);
-        const [isGenerating, setIsGenerating] = useState(false);
-        const [recruitImgSrc, setRecruitImgSrc] = useState(IMG_RECRUIT);
-        const [cultureImgSrc, setCultureImgSrc] = useState(IMG_CULTURE);
-        const [formData, setFormData] = useState({
-            recruitmentYear: '2026', jobCategory: 'Full Stack (프론트/백엔드) 개발자', experienceLevel: '(경력/신입)',
-            department: 'IT전략 (플랫폼 개발팀)', education: '무관 (졸업예정자 가능)', major: '컴퓨터공학 관련',
-            companyUrl: 'https://www.roensurgical.com',
-            responsibilities: ['신규 서비스 기획 및 프론트엔드/백엔드 개발', '신규/기존 서비스 웹퍼블리싱(퍼블리셔 협업)', '외부 API 연동', '코드 리뷰'],
-            qualifications: ['React, Vue 등 SPA 프레임워크 유경험자', 'Node.js/Spring Boot 등 백엔드 개발 유경험자', 'RDBMS 활용 및 SQL 작성 가능자'],
-            preferred: ['AWS, GCP 등 클라우드 서비스 경험자', '배포 자동화 (CI/CD) 구축/운영 경험자'],
-            employmentType: ['정규직 (수습기간 3개월, 급여 100% 지급)', '주 5일(월~금) / 유연근무제 운영', '4대 보험 적용'],
-            benefits: ['🧋 음료(차, 커피) 제공','🍦 맞춤 간식 제공','🥗 점심 식권 제공','📘 교육 지원','📓 사무용품 제공','📈 스톡옵션','📊 우리사주제도 운영','😁 유연근무제','🛋️ 경조휴가','🤱 육아휴직','📅 자유로운 연/반차','💸 퇴직 연금','💐 경조사 지원','🎂 생일 선물 제공'],
-            processSteps: ['서류전형', '1차 면접', '2차 면접', '입사'],
-            processInfo: ['접수 기간 : 채용시~2026-12-31', '문의 및 접수 방법 : 042-867-1231, hr@roensurgical.com', '이력서 양식 : 사람인 이력서 제출 (자기소개서와 경력 기술서 필수)'],
-            notices: ['서류 합격자에 한하여 전형이 진행됩니다.', '최종합격 시, 합격자에게만 개별 통보 문자가 전달됩니다.', '이력서에 기재된 학력 및 경력사항 등 기재 사항이 허위임이 판명될 경우, 합격이 취소 될 수 있습니다.']
-        });
-
-        const handleDownload = () => {
-            // 사람인 HTML 에디터용 인라인 스타일 HTML 생성
-            const html = generateSaraminHTML(formData);
-            const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-            const link = document.createElement('a');
-            link.download = `채용공고_${formData.jobCategory}.html`;
-            link.href = URL.createObjectURL(blob);
-            link.click();
-            URL.revokeObjectURL(link.href);
+        const [isGeneratingImg, setIsGeneratingImg] = useState(false);
+        
+        // --- 괄호를 벗기거나 씌우는 유틸리티 함수 ---
+        const stripExperience = (val) => {
+            if (!val) return '';
+            let stripped = val.trim();
+            // 앞뒤에 이미 괄호가 포함되어 있다면 깔끔하게 제거
+            stripped = stripped.replace(/^[\(\s]+|[\)\s]+$/g, '');
+            return stripped;
         };
 
-        const generateSaraminHTML = (data) => {
-            const blue = '#00238D';
-            const darkBg = '#0F1B3A';
-            const steps = data.processSteps;
+        const formatExperience = (val) => {
+            const stripped = stripExperience(val);
+            // 빈 값이 아니면 무조건 괄호로 예쁘게 감싸서 반환
+            return stripped ? `(${stripped})` : '';
+        };
 
-            const tableRow = (label, content) => `
-<tr>
-  <td style="width:160px;padding:20px 16px;font-weight:900;color:${blue};font-size:16px;background:#f8f9fa;border-bottom:1px solid #dee2e6;vertical-align:middle;text-align:center;">${label}</td>
-  <td style="padding:20px 16px;color:#333;font-size:15px;line-height:1.8;border-bottom:1px solid #dee2e6;vertical-align:middle;">${content}</td>
-</tr>`;
-
-            const bulletList = (items) => items.map(i => `<div style="margin:4px 0;">- ${i}</div>`).join('');
-
-            const processHTML = steps.map((step, i) => {
-                const isLast = i === steps.length - 1;
-                const circle = `<div style="display:inline-flex;align-items:center;justify-content:center;width:150px;height:150px;border-radius:50%;border:2px solid ${isLast ? blue : '#ccc'};background:${isLast ? blue : '#fff'};color:${isLast ? '#fff' : '#555'};font-weight:700;font-size:17px;text-align:center;">${step}</div>`;
-                const arrow = i < steps.length - 1 ? `<span style="margin:0 8px;color:#ccc;font-size:20px;">›</span>` : '';
-                return circle + arrow;
-            }).join('');
-
-            const benefitsHTML = data.benefits.map(b => {
-                const parts = b.trim().split(' ');
-                const emoji = parts[0];
-                const title = parts.slice(1).join(' ');
-                return `<td style="width:20%;padding:16px 8px;text-align:center;vertical-align:top;">
-  <div style="width:80px;height:80px;border-radius:20px;background:#000B2C;display:inline-flex;align-items:center;justify-content:center;font-size:40px;margin-bottom:8px;">${emoji}</div>
-  <div style="color:rgba(255,255,255,0.85);font-size:13px;line-height:1.4;">${title}</div>
-</td>`;
-            }).join('');
-
-            // 5개씩 줄바꿈
-            const benefitRows = [];
-            for (let i = 0; i < data.benefits.length; i += 5) {
-                const rowItems = data.benefits.slice(i, i + 5);
-                const cells = rowItems.map(b => {
-                    const parts = b.trim().split(' ');
-                    const emoji = parts[0];
-                    const title = parts.slice(1).join(' ');
-                    return `<td style="width:20%;padding:16px 8px;text-align:center;vertical-align:top;"><div style="width:80px;height:80px;border-radius:20px;background:#000B2C;display:inline-flex;align-items:center;justify-content:center;font-size:40px;margin-bottom:8px;">${emoji}</div><div style="color:rgba(255,255,255,0.85);font-size:13px;line-height:1.4;">${title}</div></td>`;
-                }).join('');
-                benefitRows.push(`<tr>${cells}</tr>`);
+        // 브라우저 캐시(Local Storage)에서 저장된 데이터 불러오기
+        const [formData, setFormData] = useState(() => {
+            const saved = localStorage.getItem('roenRecruitData');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.benefits) {
+                        parsed.benefits = parsed.benefits.map(b => b === '📅 자유로운 연/반차' ? '📅 자유로운<br />연/반차' : b);
+                    }
+                    if (parsed.experienceLevel) {
+                        // 로드할 때 폼 데이터는 괄호 없는 순수한 상태로 유지합니다.
+                        parsed.experienceLevel = stripExperience(parsed.experienceLevel);
+                    }
+                    return parsed;
+                } catch (e) {
+                    console.error('저장된 데이터를 불러오는데 실패했습니다:', e);
+                }
             }
+            return defaultFormData;
+        });
 
-            return `<!DOCTYPE html>
-<html lang="ko">
-<head><meta charset="UTF-8"><title>채용공고</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet"></head>
-<body style="margin:0;padding:0;font-family:'Noto Sans KR',sans-serif;">
+        // 폼 데이터가 변경될 때마다 자동으로 브라우저에 저장
+        useEffect(() => {
+            localStorage.setItem('roenRecruitData', JSON.stringify(formData));
+        }, [formData]);
 
-<!-- 헤더 이미지 -->
-<div style="background:${blue};width:100%;">
-  <div style="max-width:860px;margin:0 auto;line-height:0;">
-    <img src="https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-recruit.png" style="width:100%;display:block;" />
-  </div>
-</div>
+        const handleReset = () => {
+            if (window.confirm('입력한 내용을 모두 지우고 기본값으로 초기화하시겠습니까?')) {
+                setFormData(defaultFormData);
+                localStorage.removeItem('roenRecruitData');
+            }
+        };
 
-<!-- 직무 타이틀 -->
-<div style="background:${blue};width:100%;">
-  <div style="max-width:860px;margin:0 auto;padding:32px 40px;box-sizing:border-box;text-align:center;color:#fff;">
-    <span style="font-size:26px;font-weight:700;">${data.jobCategory}</span>
-    <span style="font-size:18px;font-weight:400;margin-left:8px;opacity:0.9;">${data.experienceLevel}</span>
-  </div>
-</div>
+        const handleImageDownload = async () => {
+            document.activeElement?.blur();
+            setIsGeneratingImg(true);
+            
+            try {
+                await new Promise(r => setTimeout(r, 250));
 
-<!-- 상세 요건 테이블 -->
-<div style="max-width:860px;margin:0 auto;padding:40px 40px;">
-  <table style="width:100%;border-collapse:collapse;border-top:3px solid ${blue};border-bottom:3px solid ${blue};">
-    ${tableRow('모집분야', data.department)}
-    ${tableRow('주요업무', bulletList(data.responsibilities))}
-    ${tableRow('자격요건', bulletList(data.qualifications))}
-    ${data.preferred.length > 0 ? tableRow('우대사항', bulletList(data.preferred)) : ''}
-    ${tableRow('근무조건', bulletList(data.employmentType))}
-  </table>
-</div>
+                await embedSUITFontsToDOM();
+                const images = Array.from(exportRef.current.querySelectorAll('img'));
+                await Promise.all(images.map(img => {
+                    if (img.complete) return Promise.resolve();
+                    return new Promise(resolve => {
+                        img.onload = resolve;
+                        img.onerror = resolve;
+                    });
+                }));
 
-<!-- 채용절차 -->
-<div style="max-width:860px;margin:0 auto;padding:0 40px 60px;">
-  <div style="font-size:22px;font-weight:800;color:${blue};margin-bottom:32px;">채용절차</div>
-  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:32px;">
-    ${processHTML}
-  </div>
-  ${data.processInfo.map(i => `<div style="color:#555;font-size:15px;margin:8px 0;line-height:1.6;">• ${i}</div>`).join('')}
-</div>
+                const node = exportRef.current;
+                
+                const originalPosition = node.style.position;
+                const originalTop = node.style.top;
+                const originalLeft = node.style.left;
+                const originalMargin = node.style.margin;
+                const originalTransform = node.style.transform;
+                const originalZIndex = node.style.zIndex;
 
-<!-- 유의사항 -->
-<div style="max-width:860px;margin:0 auto;padding:0 40px 60px;">
-  <div style="font-size:22px;font-weight:800;color:${blue};margin-bottom:20px;">유의사항</div>
-  ${data.notices.map(n => `<div style="color:#555;font-size:15px;margin:8px 0;line-height:1.6;">• ${n}</div>`).join('')}
-</div>
+                node.style.position = 'fixed';
+                node.style.top = '0px';
+                node.style.left = '0px';
+                node.style.margin = '0px';
+                node.style.transform = 'none';
+                node.style.zIndex = '9999';
 
-<!-- 구분선 -->
-<div style="background:${blue};height:20px;"></div>
+                await new Promise(r => setTimeout(r, 50));
+                
+                const dataUrl = await window.domtoimage.toPng(node, {
+                    scale: 2, 
+                    bgcolor: '#00238D',
+                    cacheBust: true
+                });
 
-<!-- 복지 -->
-<div style="background:${darkBg};padding:60px 40px;text-align:center;">
-  <div style="font-size:30px;font-weight:700;color:#fff;margin-bottom:12px;">로엔서지컬의 복지</div>
-  <div style="font-size:16px;color:rgba(255,255,255,0.75);margin-bottom:40px;">로엔서지컬은 사내 직원분들의 편의와 업무 능력 향상을 위해 다양한 방법으로 지원하고 있습니다.</div>
-  <table style="width:100%;max-width:780px;margin:0 auto;border-collapse:collapse;">
-    ${benefitRows.join('')}
-  </table>
-</div>
+                node.style.position = originalPosition;
+                node.style.top = originalTop;
+                node.style.left = originalLeft;
+                node.style.margin = originalMargin;
+                node.style.transform = originalTransform;
+                node.style.zIndex = originalZIndex;
 
-<!-- 하단 이미지 -->
-<div style="background:${darkBg};">
-  <img src="https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-culture.png" style="width:100%;max-width:860px;display:block;margin:0 auto;" />
-</div>
+                const img = new Image();
+                img.src = dataUrl;
+                await new Promise(r => img.onload = r);
 
-</body>
-</html>`;
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                const cropAmount = 8;
+                canvas.width = img.naturalWidth - (cropAmount * 2);
+                canvas.height = img.naturalHeight - (cropAmount * 2);
+                
+                ctx.drawImage(
+                    img, 
+                    cropAmount, cropAmount, canvas.width, canvas.height, 
+                    0, 0, canvas.width, canvas.height 
+                );
+
+                const croppedDataUrl = canvas.toDataURL('image/png', 1.0);
+
+                const safeName = formData.jobCategory.replace(/[^a-zA-Z0-9가-힣\s]/g, '').trim().replace(/\s+/g, '_');
+                const link = document.createElement('a');
+                link.download = `채용공고_${safeName}.png`;
+                link.href = croppedDataUrl;
+                link.click();
+            } catch(e) {
+                console.error('PNG 저장 실패:', e);
+                alert('PNG 저장 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.');
+            } finally {
+                setIsGeneratingImg(false);
+            }
         };
 
         const updateListField = (field, index, newValue) => {
             const newList = [...formData[field]]; newList[index] = newValue;
             setFormData({ ...formData, [field]: newList });
         };
-
+        
         const renderBulletList = (field, items) => (
             <div className="space-y-2">
                 {items.map((line, i) => (
@@ -365,145 +376,189 @@
             </div>
         );
 
-        return (
-            <div className="min-h-screen bg-gray-100 p-4 md:p-8 flex flex-col">
-                <header className="max-w-7xl mx-auto w-full mb-8">
-                    <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2"><Icon name="Layout" className="w-8 h-8 text-[#00238D]" />로엔서지컬 채용공고 제너레이터</h1>
-                    <p className="text-gray-600 mt-2">✨ 사내 직원용 툴입니다. 수정 후 이미지로 저장해 사용하세요.</p>
-                </header>
-                <div className="max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    <div className="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm h-fit sticky top-8 overflow-y-auto max-h-[85vh] border border-gray-200">
-                        <div className="flex justify-between items-center mb-6 border-b pb-4">
-                            <h2 className="font-bold flex items-center gap-2"><Icon name="PlusCircle" className="w-5 h-5 text-gray-400" />모집 내용 수정</h2>
-                            <button onClick={handleDownload} disabled={isGenerating} className="bg-[#00238D] hover:bg-[#001A6A] text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition disabled:opacity-50 shadow-md">
-                                <><Icon name="Download" className="w-4 h-4" /> HTML 다운로드</>
-                            </button>
-                        </div>
-                        <div className="space-y-6">
-                            <div className="grid grid-cols-2 gap-3">
-                                <div><label className="block text-xs font-bold text-gray-500 mb-1">채용 연도</label><input type="text" value={formData.recruitmentYear} onChange={e => setFormData({...formData, recruitmentYear: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-bold text-[#00238D]" /></div>
-                                <div><label className="block text-xs font-bold text-gray-500 mb-1">모집 구분</label><input type="text" value={formData.experienceLevel} onChange={e => setFormData({...formData, experienceLevel: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none" /></div>
-                            </div>
-                            <div><label className="block text-xs font-bold text-gray-500 mb-1">직무 타이틀</label><input type="text" value={formData.jobCategory} onChange={e => setFormData({...formData, jobCategory: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium" /></div>
-                            <hr className="border-gray-100" />
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">채용 단계</label><DraggableListInput items={formData.processSteps} onChange={v => setFormData({...formData, processSteps: v})} placeholder="단계 추가 후 Enter" /></div>
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">채용 안내 정보</label><DraggableListInput items={formData.processInfo} onChange={v => setFormData({...formData, processInfo: v})} placeholder="상세 정보 추가 후 Enter" /></div>
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">유의사항</label><DraggableListInput items={formData.notices} onChange={v => setFormData({...formData, notices: v})} placeholder="유의사항 추가 후 Enter" /></div>
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">복지 혜택</label><DraggableListInput items={formData.benefits} onChange={v => setFormData({...formData, benefits: v})} placeholder="이모지 선택 후 내용 입력 후 Enter" showEmojiPicker={true} /></div>
-                            <hr className="border-gray-100" />
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">주요 업무</label><DraggableListInput items={formData.responsibilities} onChange={v => setFormData({...formData, responsibilities: v})} placeholder="업무 추가 후 Enter" /></div>
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">자격 요건</label><DraggableListInput items={formData.qualifications} onChange={v => setFormData({...formData, qualifications: v})} placeholder="요건 추가 후 Enter" /></div>
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">우대 사항</label><DraggableListInput items={formData.preferred} onChange={v => setFormData({...formData, preferred: v})} placeholder="우대사항 추가 후 Enter" /></div>
-                            <div><label className="block text-sm font-bold text-gray-700 mb-2">근무 조건</label><DraggableListInput items={formData.employmentType} onChange={v => setFormData({...formData, employmentType: v})} placeholder="조건 추가 후 Enter" /></div>
-                        </div>
-                    </div>
-                    <div className="lg:col-span-8 flex justify-center pb-20">
-                        <div className="origin-top shadow-2xl transition-transform" style={{ transform: 'scale(0.8)' }}>
-                            <div ref={exportRef} id="poster-capture" className="w-[860px] bg-white flex flex-col overflow-hidden mx-auto" style={{ letterSpacing: '-0.01em' }}>
-                                <div className="relative w-full overflow-hidden flex flex-col bg-[#00238D]">
-                                    <img src={recruitImgSrc} className="w-full h-auto block" />
+        const isAnyLoading = isGeneratingImg;
 
+        return (
+            <ExportContext.Provider value={isGeneratingImg}>
+                <div className="min-h-screen bg-gray-100 p-4 md:p-8 flex flex-col">
+                    <header className="max-w-7xl mx-auto w-full mb-8">
+                        <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2"><Icon name="Layout" className="w-8 h-8 text-[#00238D]" />로엔서지컬 채용공고 제너레이터</h1>
+                        <p className="text-gray-600 mt-2">✨ 사내 직원용 툴입니다. 수정 내용은 자동으로 저장되며, 브라우저 내에서 바로 이미지로 저장할 수 있습니다.</p>
+                    </header>
+                    <div className="max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        {/* ── 왼쪽 편집 패널 ── */}
+                        <div className="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm h-fit sticky top-8 overflow-y-auto max-h-[85vh] border border-gray-200">
+                            <div className="flex justify-between items-center mb-6 border-b pb-4">
+                                <h2 className="font-bold flex items-center gap-2"><Icon name="PlusCircle" className="w-5 h-5 text-gray-400" />모집 내용 수정</h2>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={handleReset}
+                                        disabled={isAnyLoading}
+                                        title="기본값으로 초기화"
+                                        className="bg-white hover:bg-gray-50 text-gray-500 border border-gray-200 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 transition disabled:opacity-50 shadow-sm whitespace-nowrap"
+                                    >
+                                        <Icon name="RefreshCw" className="w-4 h-4" /> 초기화
+                                    </button>
+                                    <button
+                                        onClick={handleImageDownload}
+                                        disabled={isAnyLoading}
+                                        title="포스터를 PNG 이미지로 바로 저장"
+                                        className="bg-[#00238D] hover:bg-[#001A6A] text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 transition disabled:opacity-50 shadow-md whitespace-nowrap"
+                                    >
+                                        {isGeneratingImg ? <><Icon name="Loader2" className="w-4 h-4" /> 캡처 중...</> : <><Icon name="Image" className="w-4 h-4" /> 이미지</>}
+                                    </button>
                                 </div>
-                                <div className="bg-[#00238D] text-white text-center py-9 flex flex-col items-center justify-center gap-1">
-                                    <div className="flex items-center gap-2 justify-center">
-                                        <EditableText value={formData.jobCategory} onSave={(v) => setFormData({...formData, jobCategory: v})} className="text-[32px] font-bold tracking-tight inline-block" />
-                                        <EditableText value={formData.experienceLevel} onSave={(v) => setFormData({...formData, experienceLevel: v})} className="text-[22px] font-medium opacity-90 inline-block" />
+                            </div>
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">직무 타이틀</label><input type="text" value={formData.jobCategory} onChange={e => setFormData({...formData, jobCategory: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium" /></div>
+                                    <div>
+                                        {/* [수정] 사용자는 괄호 없이 편하게 타이핑할 수 있습니다. */}
+                                        <label className="block text-xs font-bold text-gray-500 mb-1">모집 구분 (자동 괄호)</label>
+                                        <input 
+                                            type="text" 
+                                            value={formData.experienceLevel} 
+                                            onChange={e => setFormData({...formData, experienceLevel: e.target.value})} 
+                                            className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium" 
+                                            placeholder="예: 경력/신입" 
+                                        />
                                     </div>
                                 </div>
-                                <div className="bg-white px-[60px] py-14">
-                                    <div className="border-y-[3px] border-[#00238D]">
-                                        <div className="flex border-b border-gray-300">
-                                            <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-gray-50/50 flex items-center justify-center text-center">모집분야</div>
-                                            <div className="flex-1 py-8 px-6 text-gray-800 font-medium text-[19px] flex items-center"><EditableText value={formData.department} onSave={(v) => setFormData({...formData, department: v})} className="w-full" /></div>
-                                        </div>
-                                        <div className="flex border-b border-gray-300">
-                                            <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-gray-50/50 flex items-center justify-center text-center">주요업무</div>
-                                            <div className="flex-1 py-8 px-6 text-gray-800 text-[18px] leading-[1.8]">{renderBulletList('responsibilities', formData.responsibilities)}</div>
-                                        </div>
-                                        <div className="flex border-b border-gray-300">
-                                            <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-gray-50/50 flex items-center justify-center text-center">자격요건</div>
-                                            <div className="flex-1 py-8 px-6 text-gray-800 text-[18px] leading-[1.8]">{renderBulletList('qualifications', formData.qualifications)}</div>
-                                        </div>
-                                        {formData.preferred.length > 0 && (
-                                            <div className="flex border-b border-gray-300">
-                                                <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-gray-50/50 flex items-center justify-center text-center">우대사항</div>
-                                                <div className="flex-1 py-8 px-6 text-gray-800 text-[18px] leading-[1.8]">{renderBulletList('preferred', formData.preferred)}</div>
+                                <div><label className="block text-xs font-bold text-gray-500 mb-1">모집 분야(부서)</label><input type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium" /></div>
+                                <hr className="border-gray-100" />
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">채용 단계</label><DraggableListInput items={formData.processSteps} onChange={v => setFormData({...formData, processSteps: v})} placeholder="단계 추가 후 Enter" /></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">채용 안내 정보</label><DraggableListInput items={formData.processInfo} onChange={v => setFormData({...formData, processInfo: v})} placeholder="상세 정보 추가 후 Enter" /></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">유의사항</label><DraggableListInput items={formData.notices} onChange={v => setFormData({...formData, notices: v})} placeholder="유의사항 추가 후 Enter" /></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">복지 혜택</label><DraggableListInput items={formData.benefits} onChange={v => setFormData({...formData, benefits: v})} placeholder="이모지 선택 후 내용 입력 후 Enter" showEmojiPicker={true} /></div>
+                                <hr className="border-gray-100" />
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">주요 업무</label><DraggableListInput items={formData.responsibilities} onChange={v => setFormData({...formData, responsibilities: v})} placeholder="업무 추가 후 Enter" /></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">자격 요건</label><DraggableListInput items={formData.qualifications} onChange={v => setFormData({...formData, qualifications: v})} placeholder="요건 추가 후 Enter" /></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">우대 사항</label><DraggableListInput items={formData.preferred} onChange={v => setFormData({...formData, preferred: v})} placeholder="우대사항 추가 후 Enter" /></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">근무 조건</label><DraggableListInput items={formData.employmentType} onChange={v => setFormData({...formData, employmentType: v})} placeholder="조건 추가 후 Enter" /></div>
+                            </div>
+                        </div>
+
+                        {/* ── 오른쪽 미리보기 ── */}
+                        <div className="lg:col-span-8 flex justify-center pb-20">
+                            <div className={`origin-top transition-transform ${isGeneratingImg ? '' : 'shadow-2xl'}`} style={{ transform: isGeneratingImg ? 'scale(1)' : 'scale(0.8)' }}>
+                                
+                                <div ref={exportRef} id="poster-capture" className="w-[860px] flex flex-col bg-[#00238D]" style={{ letterSpacing: '-0.01em' }}>
+                                    
+                                    <div className="w-full flex flex-col bg-[#00238D] relative z-10">
+                                        <img src={IMG_RECRUIT} className="w-full h-auto block" crossOrigin="anonymous" />
+                                        <div className="text-white text-center py-9 flex flex-col items-center justify-center gap-1">
+                                            <div className="flex items-center gap-2 justify-center">
+                                                <EditableText value={formData.jobCategory} onSave={(v) => setFormData({...formData, jobCategory: v})} className="text-[32px] font-bold tracking-tight inline-block" />
+                                                {/* [수정] 화면에 보여질 때만 formatExperience를 통해 괄호를 입혀서 보여줍니다. */}
+                                                <EditableText value={formatExperience(formData.experienceLevel)} onSave={(v) => setFormData({...formData, experienceLevel: stripExperience(v)})} className="text-[22px] font-medium opacity-90 inline-block whitespace-nowrap" />
                                             </div>
-                                        )}
-                                        <div className="flex">
-                                            <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-gray-50/50 flex items-center justify-center text-center">근무조건</div>
-                                            <div className="flex-1 py-8 px-6 text-gray-800 text-[18px] leading-[1.8]">{renderBulletList('employmentType', formData.employmentType)}</div>
                                         </div>
                                     </div>
-                                </div>
-                                <div className="bg-white px-[60px] pb-24">
-                                    <h3 className="text-[#00238D] text-[26px] font-[800] mb-12">채용절차</h3>
-                                    <div className="flex justify-between items-center w-full mb-14 px-2 overflow-hidden">
-                                        {formData.processSteps.map((step, idx) => (
-                                            <Fragment key={idx}>
-                                                <div className="flex flex-col items-center flex-1 min-w-0">
-                                                    <div className={`aspect-square rounded-full border-[3px] flex items-center justify-center font-bold shadow-sm ${idx === formData.processSteps.length - 1 ? 'bg-[#00238D] text-white border-[#00238D] shadow-lg' : 'border-gray-300 text-gray-700 bg-white'} ${formData.processSteps.length > 5 ? 'w-24 h-24 text-[16px]' : 'w-32 h-32 text-[22px]'}`}>
-                                                        <EditableText value={step} onSave={(v) => updateListField('processSteps', idx, v)} className="text-center px-1 break-keep" />
+
+                                    {/* .has-border 클래스를 추가해 테두리 강제 삭제 리셋에서 보호받습니다. */}
+                                    <div className="w-full flex flex-col bg-white relative z-20">
+                                        <div className="px-[60px] py-14">
+                                            <div className="border-y-[3px] border-[#00238D] has-border" style={{ borderLeft: 'none', borderRight: 'none' }}>
+                                                <div className="flex border-b border-gray-300 has-border" style={{ borderTop: 'none', borderLeft: 'none', borderRight: 'none' }}>
+                                                    <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-[#F8F9FA] flex items-center justify-center text-center">모집분야</div>
+                                                    <div className="flex-1 py-8 px-6 text-gray-800 font-medium text-[19px] flex items-center">
+                                                        <EditableText value={formData.department} onSave={(v) => setFormData({...formData, department: v})} className="w-full" />
                                                     </div>
                                                 </div>
-                                                {idx < formData.processSteps.length - 1 && (
-                                                    <div className="flex items-center justify-center flex-shrink-0">
-                                                        <Icon name="ChevronRight" className={`${formData.processSteps.length > 5 ? 'w-5 h-5' : 'w-8 h-8'} text-gray-300 mx-0.5`} />
+                                                <div className="flex border-b border-gray-300 has-border" style={{ borderTop: 'none', borderLeft: 'none', borderRight: 'none' }}>
+                                                    <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-[#F8F9FA] flex items-center justify-center text-center">주요업무</div>
+                                                    <div className="flex-1 py-8 px-6 text-gray-800 text-[18px] leading-[1.8]">{renderBulletList('responsibilities', formData.responsibilities)}</div>
+                                                </div>
+                                                <div className="flex border-b border-gray-300 has-border" style={{ borderTop: 'none', borderLeft: 'none', borderRight: 'none' }}>
+                                                    <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-[#F8F9FA] flex items-center justify-center text-center">자격요건</div>
+                                                    <div className="flex-1 py-8 px-6 text-gray-800 text-[18px] leading-[1.8]">{renderBulletList('qualifications', formData.qualifications)}</div>
+                                                </div>
+                                                {formData.preferred.length > 0 && (
+                                                    <div className="flex border-b border-gray-300 has-border" style={{ borderTop: 'none', borderLeft: 'none', borderRight: 'none' }}>
+                                                        <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-[#F8F9FA] flex items-center justify-center text-center">우대사항</div>
+                                                        <div className="flex-1 py-8 px-6 text-gray-800 text-[18px] leading-[1.8]">{renderBulletList('preferred', formData.preferred)}</div>
                                                     </div>
                                                 )}
-                                            </Fragment>
-                                        ))}
-                                    </div>
-                                    <ul className="space-y-4 text-[19px] text-gray-600 font-medium">
-                                        {formData.processInfo.map((info, idx) => (
-                                            <li key={idx} className="flex items-start leading-[1.6]">
-                                                <span className="mr-2 text-[#00238D]">•</span>
-                                                <EditableText value={info} onSave={(v) => updateListField('processInfo', idx, v)} className="flex-1" />
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                                <div className="bg-white px-[60px] pb-24">
-                                    <h3 className="text-[#00238D] text-[26px] font-[800] mb-8">유의사항</h3>
-                                    <ul className="space-y-4 text-[19px] text-gray-600 font-medium">
-                                        {formData.notices.map((notice, idx) => (
-                                            <li key={idx} className="flex items-start leading-[1.6]">
-                                                <span className="mr-2 text-[#00238D]">•</span>
-                                                <EditableText value={notice} onSave={(v) => updateListField('notices', idx, v)} className="flex-1" />
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                                <div className="w-full h-[28px] bg-[#00228D]"></div>
-                                <div className="bg-[#0F1B3A] py-28 px-[60px]">
-                                    <h3 className="text-white text-[38px] font-bold text-center mb-[20px]">로엔서지컬의 복지</h3>
-                                    <p className="text-white/80 text-[24px] text-center mb-16 break-keep font-normal">로엔서지컬은 사내 직원분들의 편의와 업무 능력 향상을 위해 다양한 방법으로 지원하고 있습니다.</p>
-                                    <div className="grid grid-cols-5 gap-x-[27px] gap-y-14">
-                                        {formData.benefits.map((line, i) => {
-                                            const parts = line.trim().split(' ');
-                                            const emoji = parts[0];
-                                            const title = parts.slice(1).join(' ');
-                                            return (
-                                                <div key={i} className="flex flex-col items-center text-center">
-                                                    <div className="w-[120px] h-[120px] rounded-3xl bg-[#000B2C] flex items-center justify-center mb-6 shadow-lg border border-white/5 overflow-hidden">
-                                                        <span className="leading-none select-none" style={{ fontFamily: "'Noto Color Emoji', sans-serif", fontSize: '64px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{emoji}</span>
-                                                    </div>
-                                                    <EditableText value={title} onSave={(v) => updateListField('benefits', i, `${emoji} ${v}`)} className="text-white/90 text-[18px] font-normal break-keep w-full" />
+                                                <div className="flex">
+                                                    <div className="w-[180px] py-8 px-6 font-black text-[#00238D] text-[20px] bg-[#F8F9FA] flex items-center justify-center text-center">근무조건</div>
+                                                    <div className="flex-1 py-8 px-6 text-gray-800 text-[18px] leading-[1.8]">{renderBulletList('employmentType', formData.employmentType)}</div>
                                                 </div>
-                                            );
-                                        })}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="px-[60px] pb-24">
+                                            <h3 className="text-[#00238D] text-[26px] font-[800] mb-12">채용절차</h3>
+                                            <div className="flex justify-between items-center w-full mb-14 px-2 overflow-hidden">
+                                                {formData.processSteps.map((step, idx) => (
+                                                    <Fragment key={idx}>
+                                                        <div className="flex flex-col items-center flex-1 min-w-0">
+                                                            <div className={`aspect-square rounded-full border-[3px] flex items-center justify-center font-bold shadow-sm has-border ${idx === formData.processSteps.length - 1 ? 'bg-[#00238D] text-white border-[#00238D] shadow-lg' : 'border-gray-300 text-gray-700 bg-white'} ${formData.processSteps.length > 5 ? 'w-24 h-24 text-[16px]' : 'w-32 h-32 text-[22px]'}`}>
+                                                                <EditableText value={step} onSave={(v) => updateListField('processSteps', idx, v)} className="text-center px-1 whitespace-nowrap" />
+                                                            </div>
+                                                        </div>
+                                                        {idx < formData.processSteps.length - 1 && (
+                                                            <div className="flex items-center justify-center flex-shrink-0">
+                                                                <Icon name="ChevronRight" className={`${formData.processSteps.length > 5 ? 'w-5 h-5' : 'w-8 h-8'} text-gray-300 mx-0.5`} />
+                                                            </div>
+                                                        )}
+                                                    </Fragment>
+                                                ))}
+                                            </div>
+                                            <ul className="space-y-4 text-[19px] text-gray-600 font-medium">
+                                                {formData.processInfo.map((info, idx) => (
+                                                    <li key={idx} className="flex items-start leading-[1.6] break-keep">
+                                                        <span className="mr-2 text-[#00238D]">•</span>
+                                                        <EditableText value={info} onSave={(v) => updateListField('processInfo', idx, v)} className="flex-1" />
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                        
+                                        <div className="px-[60px] pb-24">
+                                            <h3 className="text-[#00238D] text-[26px] font-[800] mb-8">유의사항</h3>
+                                            <ul className="space-y-4 text-[19px] text-gray-600 font-medium">
+                                                {formData.notices.map((notice, idx) => (
+                                                    <li key={idx} className="flex items-start leading-[1.6] break-keep">
+                                                        <span className="mr-2 text-[#00238D]">•</span>
+                                                        <EditableText value={notice} onSave={(v) => updateListField('notices', idx, v)} className="flex-1" />
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="bg-[#0F1B3A]">
-                                    <a href={formData.companyUrl.startsWith('http') ? formData.companyUrl : `https://${formData.companyUrl}`} target="_blank" className="block cursor-pointer">
-                                        <img src={cultureImgSrc} className="w-full h-auto block object-cover" />
-                                    </a>
+
+                                    <div className="w-full flex flex-col bg-[#0F1B3A] relative z-30">
+                                        <div className="w-full h-[28px] bg-[#00228D]"></div>
+                                        <div className="py-28 px-[60px]">
+                                            <h3 className="text-white text-[38px] font-bold text-center mb-[20px]">로엔서지컬의 복지</h3>
+                                            <p className="text-white/80 text-[24px] text-center mb-16 break-keep font-normal leading-[1.5]">로엔서지컬은 사내 직원분들의 편의와 업무 능력 향상을 위해<br />다양한 방법으로 지원하고 있습니다.</p>
+                                            <div className="grid grid-cols-5 gap-x-[27px] gap-y-14">
+                                                {formData.benefits.map((line, i) => {
+                                                    const parts = line.trim().split(' ');
+                                                    const emoji = parts[0];
+                                                    const title = parts.slice(1).join(' ');
+                                                    return (
+                                                        <div key={i} className="flex flex-col items-center text-center">
+                                                            <div className="w-[120px] h-[120px] rounded-3xl bg-[#000B2C] flex items-center justify-center mb-6 shadow-lg border border-white/5 overflow-hidden has-border">
+                                                                <span className="leading-none select-none" style={{ fontFamily: "'Noto Color Emoji', sans-serif", fontSize: '64px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{emoji}</span>
+                                                            </div>
+                                                            <EditableText value={title} onSave={(v) => updateListField('benefits', i, `${emoji} ${v}`)} className="text-white/90 text-[18px] font-normal break-keep w-full" />
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                        <a href={formData.companyUrl.startsWith('http') ? formData.companyUrl : `https://${formData.companyUrl}`} target="_blank" className="block cursor-pointer w-full">
+                                            <img src={IMG_CULTURE} className="w-full h-auto block object-cover" crossOrigin="anonymous" />
+                                        </a>
+                                    </div>
+
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            </ExportContext.Provider>
         );
     }
 
