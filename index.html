@@ -30,12 +30,20 @@
             border-color: transparent !important;
             outline: none !important;
         }
+
+        /* 텍스트영역 자동 높이 조절을 위한 기본 스타일 */
+        .auto-height-textarea {
+            resize: none;
+            overflow: hidden;
+            min-height: 1.5em;
+            display: block;
+        }
     </style>
 </head>
 <body>
     <div id="root"></div>
     <script type="text/babel">
-    const { useState, useRef, useEffect, Fragment } = React;
+    const { useState, useRef, useEffect, Fragment, useCallback } = React;
 
     const ExportContext = React.createContext(false);
 
@@ -95,16 +103,57 @@
         return icons[name] || null;
     };
 
-    const EditableText = ({ value, onSave, className, multiline = false }) => {
+    const AutoHeightTextarea = ({ value, onChange, onKeyDown, onBlur, className, placeholder, autoFocus }) => {
+        const textareaRef = useRef(null);
+
+        const adjustHeight = useCallback(() => {
+            const textarea = textareaRef.current;
+            if (textarea) {
+                textarea.style.height = 'auto';
+                textarea.style.height = textarea.scrollHeight + 'px';
+            }
+        }, []);
+
+        useEffect(() => {
+            adjustHeight();
+        }, [value, adjustHeight]);
+
+        return (
+            <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(e) => {
+                    onChange(e.target.value);
+                    adjustHeight();
+                }}
+                onKeyDown={onKeyDown}
+                onBlur={onBlur}
+                className={`auto-height-textarea ${className}`}
+                placeholder={placeholder}
+                rows="1"
+                autoFocus={autoFocus}
+            />
+        );
+    };
+
+    const EditableText = ({ value, onSave, className }) => {
         const isExporting = React.useContext(ExportContext);
         const [isEditing, setIsEditing] = useState(false);
         const [localValue, setLocalValue] = useState(value);
-        const inputRef = useRef(null);
         
         useEffect(() => { setLocalValue(value); }, [value]);
         
-        const handleBlur = () => { setIsEditing(false); if (localValue !== value) onSave(localValue); };
-        const handleKeyDown = (e) => { if (e.key === 'Enter' && !multiline) { e.preventDefault(); inputRef.current.blur(); } };
+        const handleBlur = () => { 
+            setIsEditing(false); 
+            if (localValue !== value) onSave(localValue); 
+        };
+
+        const handleKeyDown = (e) => { 
+            if (e.key === 'Enter' && !e.shiftKey) { 
+                e.preventDefault(); 
+                handleBlur();
+            } 
+        };
         
         const renderValue = (val) => {
             if (!val) return <span className="text-gray-300 italic">(비어있음)</span>;
@@ -124,9 +173,19 @@
         }
 
         if (isEditing) {
-            return multiline
-                ? <textarea ref={inputRef} className={`w-full p-1 bg-blue-50 text-gray-800 outline-none border border-blue-400 rounded ${className || ''}`} value={localValue} onChange={(e) => setLocalValue(e.target.value)} onBlur={handleBlur} autoFocus />
-                : <input ref={inputRef} className={`w-full p-1 bg-blue-50 text-inherit outline-none border border-blue-400 rounded ${className || ''}`} value={localValue} onChange={(e) => setLocalValue(e.target.value)} onBlur={handleBlur} onKeyDown={handleKeyDown} autoFocus />;
+            return (
+                <div className="w-full">
+                    <AutoHeightTextarea 
+                        value={localValue.replace(/<br\s*\/?>/gi, '\n')}
+                        onChange={(v) => setLocalValue(v.replace(/\n/g, '<br />'))}
+                        onKeyDown={handleKeyDown}
+                        onBlur={handleBlur}
+                        className={`w-full p-1 bg-blue-50 text-gray-800 outline-none border border-blue-400 rounded ${className || ''}`}
+                        placeholder="내용을 입력하세요"
+                        autoFocus
+                    />
+                </div>
+            );
         }
         
         return <div onClick={() => setIsEditing(true)} className={`editable-preview transition-all px-1 -mx-1 min-h-[1.2em] min-w-[20px] ${className || ''}`}>{renderValue(value)}</div>;
@@ -151,7 +210,7 @@
         }, []);
         return (
             <div className="relative" ref={ref}>
-                <button type="button" onClick={() => setOpen(o => !o)} className="w-10 h-10 flex items-center justify-center text-xl rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#00238D] transition-all shadow-sm" title="이모지 선택">😊</button>
+                <button type="button" onClick={() => setOpen(o => !o)} className="w-[42px] h-[42px] flex items-center justify-center text-xl rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#00238D] transition-all shadow-sm" title="이모지 선택">😊</button>
                 {open && (
                     <div className="absolute bottom-12 left-0 z-50 bg-white border border-gray-200 rounded-xl shadow-2xl w-72 overflow-hidden">
                         <div className="flex border-b border-gray-100 overflow-x-auto">
@@ -173,39 +232,82 @@
     const DraggableListInput = ({ items, onChange, placeholder, isAiLoading, showEmojiPicker = false }) => {
         const [inputValue, setInputValue] = useState('');
         const [draggedIdx, setDraggedIdx] = useState(null);
-        const [editingIdx, setEditingIdx] = useState(null);
-        const [editValue, setEditValue] = useState('');
-        const inputRef = useRef(null);
-        const handleKeyDown = (e) => { if (e.key === 'Enter' && inputValue.trim() !== '') { e.preventDefault(); onChange([...items, inputValue.trim()]); setInputValue(''); } };
-        const handleDragStart = (e, idx) => { setDraggedIdx(idx); e.dataTransfer.effectAllowed = 'move'; };
+
+        const handleItemChange = (idx, newValue) => {
+            const newItems = [...items];
+            newItems[idx] = newValue;
+            onChange(newItems);
+        };
+
+        const handleKeyDown = (e) => { 
+            if (e.key === 'Enter' && !e.shiftKey && inputValue.trim() !== '') { 
+                e.preventDefault(); 
+                onChange([...items, inputValue.trim()]); 
+                setInputValue(''); 
+            } 
+        };
+        
+        const handleDragStart = (e, idx) => { 
+            setDraggedIdx(idx); 
+            e.dataTransfer.effectAllowed = 'move'; 
+        };
+        
         const handleDragEnter = (idx) => {
             if (draggedIdx === null || draggedIdx === idx) return;
-            const newItems = [...items]; const draggedItem = newItems[draggedIdx];
-            newItems.splice(draggedIdx, 1); newItems.splice(idx, 0, draggedItem);
-            setDraggedIdx(idx); onChange(newItems);
+            const newItems = [...items]; 
+            const draggedItem = newItems[draggedIdx];
+            newItems.splice(draggedIdx, 1); 
+            newItems.splice(idx, 0, draggedItem);
+            setDraggedIdx(idx); 
+            onChange(newItems);
         };
+
         const handleEmojiSelect = (emoji) => {
             setInputValue(prev => emoji + ' ' + prev);
-            if (inputRef.current) inputRef.current.focus();
         };
+
         return (
             <div className="w-full flex flex-col gap-2 relative">
                 {items.map((item, idx) => (
-                    <div key={idx} draggable={editingIdx !== idx} onDragStart={(e) => handleDragStart(e, idx)} onDragEnter={() => handleDragEnter(idx)} onDragOver={(e) => e.preventDefault()} onDragEnd={() => setDraggedIdx(null)} className={`group flex items-center justify-between bg-white border rounded-lg p-2 transition-all select-none ${editingIdx === idx ? 'border-blue-500 ring-4 ring-blue-100' : 'border-gray-200 cursor-grab hover:border-blue-400'}`}>
-                        <div className="flex items-center gap-2 flex-1 overflow-hidden">
-                            <Icon name="GripVertical" className={`w-4 h-4 shrink-0 ${draggedIdx === idx ? 'text-[#00238D]' : 'text-gray-400'}`} />
-                            {editingIdx === idx
-                                ? <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={() => { if(editValue.trim()) { const n=[...items]; n[idx]=editValue; onChange(n); } setEditingIdx(null); }} onKeyDown={(e) => e.key === 'Enter' && e.target.blur()} autoFocus className="flex-1 w-full px-2 py-0.5 text-sm font-medium border-b-2 border-[#00238D] outline-none" />
-                                : <span onDoubleClick={() => { setEditingIdx(idx); setEditValue(item); }} className="text-sm font-medium text-gray-700 flex-1 truncate cursor-text py-0.5">{item}</span>
-                            }
+                    <div 
+                        key={idx} 
+                        draggable 
+                        onDragStart={(e) => handleDragStart(e, idx)} 
+                        onDragEnter={() => handleDragEnter(idx)} 
+                        onDragOver={(e) => e.preventDefault()} 
+                        onDragEnd={() => setDraggedIdx(null)} 
+                        className={`group flex items-center justify-between bg-white border rounded-lg p-2 transition-all select-none border-gray-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-100`}
+                    >
+                        <div className="flex items-start gap-2 flex-1 overflow-hidden pt-1">
+                            <Icon name="GripVertical" className={`w-4 h-4 mt-1 shrink-0 cursor-grab ${draggedIdx === idx ? 'text-[#00238D]' : 'text-gray-400'}`} />
+                            <AutoHeightTextarea 
+                                value={item.replace(/<br\s*\/?>/gi, '\n')} 
+                                onChange={(v) => handleItemChange(idx, v.replace(/\n/g, '<br />'))}
+                                className="flex-1 w-full px-2 py-0.5 text-sm font-medium bg-transparent outline-none border-b border-transparent focus:border-[#00238D]"
+                                placeholder="내용을 입력하세요"
+                            />
                         </div>
-                        <button onClick={() => onChange(items.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Icon name="X" className="w-4 h-4" /></button>
+                        <button onClick={() => onChange(items.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                            <Icon name="X" className="w-4 h-4" />
+                        </button>
                     </div>
                 ))}
-                <div className="relative flex gap-2 items-center">
+                {/* [수정] 입력창과 이모지 버튼 정렬: items-center와 gap을 이용해 일자로 배치 */}
+                <div className="relative flex items-center gap-2">
                     {showEmojiPicker && <EmojiPicker onSelect={handleEmojiSelect} />}
-                    <input ref={inputRef} type="text" value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={handleKeyDown} placeholder={isAiLoading ? "생성 중..." : placeholder} disabled={isAiLoading} className="flex-1 p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:ring-4 focus:ring-[#00238D]/10 outline-none text-sm transition-all shadow-inner" />
+                    <div className="flex-1">
+                        <AutoHeightTextarea 
+                            value={inputValue} 
+                            onChange={setInputValue} 
+                            onKeyDown={handleKeyDown}
+                            className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:ring-4 focus:ring-[#00238D]/10 outline-none text-sm transition-all shadow-inner leading-normal" 
+                            placeholder={isAiLoading ? "생성 중..." : placeholder}
+                            disabled={isAiLoading}
+                        />
+                    </div>
                 </div>
+                {/* 가이드 문구 위치 조정 */}
+                <div className="text-[10px] text-gray-400 -mt-1 ml-1 font-medium">Enter로 추가, Shift+Enter로 줄바꿈</div>
             </div>
         );
     };
@@ -213,7 +315,6 @@
     const IMG_RECRUIT = 'https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-recruit.png';
     const IMG_CULTURE = 'https://raw.githubusercontent.com/ROENOMH/image-hosting/main/roen-surgical-culture.png';
 
-    // [수정] 입력 폼에서는 괄호가 없는 순수 텍스트를 기본으로 하도록 변경
     const defaultFormData = {
         jobCategory: 'Full Stack (프론트/백엔드) 개발자', experienceLevel: '경력/신입', 
         department: 'IT전략 (플랫폼 개발팀)', education: '무관 (졸업예정자 가능)', major: '컴퓨터공학 관련',
@@ -232,22 +333,18 @@
         const exportRef = useRef(null);
         const [isGeneratingImg, setIsGeneratingImg] = useState(false);
         
-        // --- 괄호를 벗기거나 씌우는 유틸리티 함수 ---
         const stripExperience = (val) => {
             if (!val) return '';
             let stripped = val.trim();
-            // 앞뒤에 이미 괄호가 포함되어 있다면 깔끔하게 제거
             stripped = stripped.replace(/^[\(\s]+|[\)\s]+$/g, '');
             return stripped;
         };
 
         const formatExperience = (val) => {
             const stripped = stripExperience(val);
-            // 빈 값이 아니면 무조건 괄호로 예쁘게 감싸서 반환
             return stripped ? `(${stripped})` : '';
         };
 
-        // 브라우저 캐시(Local Storage)에서 저장된 데이터 불러오기
         const [formData, setFormData] = useState(() => {
             const saved = localStorage.getItem('roenRecruitData');
             if (saved) {
@@ -257,7 +354,6 @@
                         parsed.benefits = parsed.benefits.map(b => b === '📅 자유로운 연/반차' ? '📅 자유로운<br />연/반차' : b);
                     }
                     if (parsed.experienceLevel) {
-                        // 로드할 때 폼 데이터는 괄호 없는 순수한 상태로 유지합니다.
                         parsed.experienceLevel = stripExperience(parsed.experienceLevel);
                     }
                     return parsed;
@@ -268,7 +364,6 @@
             return defaultFormData;
         });
 
-        // 폼 데이터가 변경될 때마다 자동으로 브라우저에 저장
         useEffect(() => {
             localStorage.setItem('roenRecruitData', JSON.stringify(formData));
         }, [formData]);
@@ -386,7 +481,6 @@
                         <p className="text-gray-600 mt-2">✨ 사내 직원용 툴입니다. 수정 내용은 자동으로 저장되며, 브라우저 내에서 바로 이미지로 저장할 수 있습니다.</p>
                     </header>
                     <div className="max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-8">
-                        {/* ── 왼쪽 편집 패널 ── */}
                         <div className="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm h-fit sticky top-8 overflow-y-auto max-h-[85vh] border border-gray-200">
                             <div className="flex justify-between items-center mb-6 border-b pb-4">
                                 <h2 className="font-bold flex items-center gap-2"><Icon name="PlusCircle" className="w-5 h-5 text-gray-400" />모집 내용 수정</h2>
@@ -410,21 +504,31 @@
                                 </div>
                             </div>
                             <div className="space-y-6">
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">직무 타이틀</label><input type="text" value={formData.jobCategory} onChange={e => setFormData({...formData, jobCategory: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium" /></div>
-                                    <div>
-                                        {/* [수정] 사용자는 괄호 없이 편하게 타이핑할 수 있습니다. */}
-                                        <label className="block text-xs font-bold text-gray-500 mb-1">모집 구분 (자동 괄호)</label>
-                                        <input 
-                                            type="text" 
-                                            value={formData.experienceLevel} 
-                                            onChange={e => setFormData({...formData, experienceLevel: e.target.value})} 
-                                            className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium" 
-                                            placeholder="예: 경력/신입" 
-                                        />
-                                    </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 mb-1">직무 타이틀</label>
+                                    <AutoHeightTextarea 
+                                        value={formData.jobCategory} 
+                                        onChange={v => setFormData({...formData, jobCategory: v})} 
+                                        className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium leading-normal" 
+                                    />
                                 </div>
-                                <div><label className="block text-xs font-bold text-gray-500 mb-1">모집 분야(부서)</label><input type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium" /></div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 mb-1">모집 구분 (자동 괄호)</label>
+                                    <AutoHeightTextarea 
+                                        value={formData.experienceLevel} 
+                                        onChange={v => setFormData({...formData, experienceLevel: v})} 
+                                        className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium leading-normal" 
+                                        placeholder="예: 경력/신입" 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 mb-1">모집 분야(부서)</label>
+                                    <AutoHeightTextarea 
+                                        value={formData.department} 
+                                        onChange={v => setFormData({...formData, department: v})} 
+                                        className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-[#00238D] outline-none font-medium leading-normal" 
+                                    />
+                                </div>
                                 <hr className="border-gray-100" />
                                 <div><label className="block text-sm font-bold text-gray-700 mb-2">채용 단계</label><DraggableListInput items={formData.processSteps} onChange={v => setFormData({...formData, processSteps: v})} placeholder="단계 추가 후 Enter" /></div>
                                 <div><label className="block text-sm font-bold text-gray-700 mb-2">채용 안내 정보</label><DraggableListInput items={formData.processInfo} onChange={v => setFormData({...formData, processInfo: v})} placeholder="상세 정보 추가 후 Enter" /></div>
@@ -438,24 +542,19 @@
                             </div>
                         </div>
 
-                        {/* ── 오른쪽 미리보기 ── */}
                         <div className="lg:col-span-8 flex justify-center pb-20">
                             <div className={`origin-top transition-transform ${isGeneratingImg ? '' : 'shadow-2xl'}`} style={{ transform: isGeneratingImg ? 'scale(1)' : 'scale(0.8)' }}>
-                                
                                 <div ref={exportRef} id="poster-capture" className="w-[860px] flex flex-col bg-[#00238D]" style={{ letterSpacing: '-0.01em' }}>
-                                    
                                     <div className="w-full flex flex-col bg-[#00238D] relative z-10">
                                         <img src={IMG_RECRUIT} className="w-full h-auto block" crossOrigin="anonymous" />
                                         <div className="text-white text-center py-9 flex flex-col items-center justify-center gap-1">
                                             <div className="flex items-center gap-2 justify-center">
                                                 <EditableText value={formData.jobCategory} onSave={(v) => setFormData({...formData, jobCategory: v})} className="text-[32px] font-bold tracking-tight inline-block" />
-                                                {/* [수정] 화면에 보여질 때만 formatExperience를 통해 괄호를 입혀서 보여줍니다. */}
                                                 <EditableText value={formatExperience(formData.experienceLevel)} onSave={(v) => setFormData({...formData, experienceLevel: stripExperience(v)})} className="text-[22px] font-medium opacity-90 inline-block whitespace-nowrap" />
                                             </div>
                                         </div>
                                     </div>
 
-                                    {/* .has-border 클래스를 추가해 테두리 강제 삭제 리셋에서 보호받습니다. */}
                                     <div className="w-full flex flex-col bg-white relative z-20">
                                         <div className="px-[60px] py-14">
                                             <div className="border-y-[3px] border-[#00238D] has-border" style={{ borderLeft: 'none', borderRight: 'none' }}>
@@ -552,7 +651,6 @@
                                             <img src={IMG_CULTURE} className="w-full h-auto block object-cover" crossOrigin="anonymous" />
                                         </a>
                                     </div>
-
                                 </div>
                             </div>
                         </div>
